@@ -17,12 +17,18 @@ defmodule ExQueb do
       |> Enum.map(&({Atom.to_string(elem(&1, 0)), elem(&1, 1)}))
 
       query
+      |> uuid_filters(filters)
       |> ExQueb.StringFilters.string_filters(filters)
       |> integer_filters(filters)
       |> date_filters(filters)
     else
       query
     end
+  end
+
+  defp uuid_filters(builder, filters) do
+    builder
+    |> build_uuid_filters(filters, :uuideq)
   end
 
   defp integer_filters(builder, filters) do
@@ -38,9 +44,24 @@ defmodule ExQueb do
     |> build_date_filters(filters, :lte)
   end
 
+  defp build_uuid_filters(builder, filters, condition) do
+    Enum.filter_map(filters, &(String.match?(elem(&1,0), ~r/_#{condition}$/)), &({String.replace(elem(&1, 0), "_#{condition}", ""), elem(&1, 1)}))
+    |> Enum.reduce(builder, fn({k,v}, acc) ->
+      _build_uuid_filter(acc, String.to_atom(k), v, condition)
+    end)
+  end
+
+  defp _build_uuid_filter(query, fld, value, :uuideq) do
+    where(query, [q], fragment("CAST(? AS CHAR(36)) = ?", field(q, ^fld), ^value))
+  end
+
   defp build_integer_filters(builder, filters, condition) do
     Enum.filter_map(filters, &(String.match?(elem(&1,0), ~r/_#{condition}$/)), &({String.replace(elem(&1, 0), "_#{condition}", ""), elem(&1, 1)}))
     |> Enum.reduce(builder, fn({k,v}, acc) ->
+      v = case Integer.parse(v) do
+        :error -> 0
+        v -> v
+      end
       _build_integer_filter(acc, String.to_atom(k), v, condition)
     end)
   end
