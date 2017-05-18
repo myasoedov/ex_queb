@@ -59,8 +59,8 @@ defmodule ExQueb do
     Enum.filter_map(filters, &(String.match?(elem(&1,0), ~r/_#{condition}$/)), &({String.replace(elem(&1, 0), "_#{condition}", ""), elem(&1, 1)}))
     |> Enum.reduce(builder, fn({k,v}, acc) ->
       v = case Integer.parse(v) do
-        :error -> 0
-        v -> v
+        {v, _} -> v
+        _ -> 0
       end
       _build_integer_filter(acc, String.to_atom(k), v, condition)
     end)
