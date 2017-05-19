@@ -47,12 +47,15 @@ defmodule ExQueb do
   defp build_uuid_filters(builder, filters, condition) do
     Enum.filter_map(filters, &(String.match?(elem(&1,0), ~r/_#{condition}$/)), &({String.replace(elem(&1, 0), "_#{condition}", ""), elem(&1, 1)}))
     |> Enum.reduce(builder, fn({k,v}, acc) ->
-      _build_uuid_filter(acc, String.to_atom(k), v, condition)
+      case Ecto.UUID.cast(v) do
+        {:ok, uuid} -> _build_uuid_filter(acc, String.to_atom(k), uuid, condition)
+        _ -> acc
+      end
     end)
   end
 
   defp _build_uuid_filter(query, fld, value, :uuideq) do
-    where(query, [q], fragment("CAST(? AS CHAR(36)) = ?", field(q, ^fld), ^value))
+    where(query, [q], field(q, ^fld) == ^value)
   end
 
   defp build_integer_filters(builder, filters, condition) do
