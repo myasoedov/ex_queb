@@ -9,6 +9,8 @@ defmodule ExQueb do
   Create the filter
 
   Uses the :q query parameter to build the filter.
+  @options is a map with additional parameters like following:
+    scopes: list of typles {scope_name, fn/2} for custom filtering
   """
   def filter(query, params, options \\ %{}) do
     params[Application.get_env(:ex_queb, :filter_param, :q)]
@@ -16,14 +18,14 @@ defmodule ExQueb do
     |> apply_filters(query, options)
   end
 
-  def prepare_filters(nil), do: []
-  def prepare_filters(filters) do
+  defp prepare_filters(nil), do: []
+  defp prepare_filters(filters) do
     Map.to_list(filters)
     |> Enum.filter(&(not elem(&1,1) in ["", nil]))
     |> Enum.map(&({Atom.to_string(elem(&1, 0)), elem(&1, 1)}))
   end
 
-  def apply_filters(filters, query, options) do
+  defp apply_filters(filters, query, options) do
     Enum.reduce(filters, query, fn({filter, value}, query) ->
       case Regex.run(~r/^(.+)_([\w]+)$/, filter) do
       [_, field, "scope"] -> find_scope_in_options(options, field)
@@ -36,19 +38,24 @@ defmodule ExQueb do
     end)
   end
 
-  defp find_scope_in_options(options, field), do: nil
+  defp find_scope_in_options(%{scopes: scopes}, field) do
+    {_, scope} = Enum.find(scopes, fn ({name, _}) -> field == "#{name}" end)
+    scope
+  end
+  defp find_scope_in_options(_, _), do: nil
 
-  defp build_scope_filter(nil, query, value), do: query
+  defp build_scope_filter(nil, query, _), do: query
   defp build_scope_filter(scope, query, value), do: scope.(query, value)
 
+  # UUID filter
   defp build_filter(query, fld, value, :uuideq) do
     case Ecto.UUID.cast(value) do
-      {:ok, uuid} -> where(query, [q], field(q, ^fld) == ^value)
-        # _build_uuid_filter(acc, String.to_atom(k), uuid, condition)
+      {:ok, uuid} -> where(query, [q], field(q, ^fld) == ^uuid)
       _ -> query
     end
   end
 
+  # Numerical filters
   defp build_filter(query, fld, value, :eq) do
     where(query, [q], field(q, ^fld) == ^value)
   end
@@ -65,12 +72,13 @@ defmodule ExQueb do
     where(query, [q], field(q, ^fld) > ^value)
   end
 
-  defp build_filter(builder, field, value, :begins_with) do
+  # String filters
+  defp build_filter(builder, field, value, :beginswith) do
     match = String.downcase(value) <> "%"
     where(builder, [q], like(fragment("LOWER(?)", field(q, ^field)), ^match))
   end
 
-  defp build_filter(builder, field, value, :ends_with) do
+  defp build_filter(builder, field, value, :endswith) do
     match = "%" <> String.downcase(value)
     where(builder, [q], like(fragment("LOWER(?)", field(q, ^field)), ^match))
   end
@@ -84,13 +92,7 @@ defmodule ExQueb do
     where(builder, [q], fragment("LOWER(?)", field(q, ^field)) == fragment("LOWER(?)", ^value))
   end
 
-  #defp build_date_filters(builder, filters, condition) do
-  #  Enum.filter_map(filters, &(String.match?(elem(&1,0), ~r/_#{condition}$/)), &({String.replace(elem(&1, 0), "_#{condition}", ""), elem(&1, 1)}))
-  #  |> Enum.reduce(builder, fn({k,v}, acc) ->
-  #    _build_date_filter(acc, String.to_atom(k), cast_date_time(v), condition)
-  #  end)
-  #end
-
+  # Date filters
   defp build_filter(query, fld, value, :gte) do
     where(query, [q], fragment("? >= ?", field(q, ^fld), type(^cast_date_time(value), Ecto.DateTime)))
   end
@@ -98,16 +100,17 @@ defmodule ExQueb do
     where(query, [q], fragment("? <= ?", field(q, ^fld), type(^cast_date_time(value), Ecto.DateTime)))
   end
 
+  # Unknown
+  defp build_filter(query, _, _, matcher) do
+    Logger.warn "unknown matcher #{matcher}... skipping"
+    query
+  end
+
   defp cast_date_time(value) do
     {:ok, date} = Ecto.Date.cast(value)
     date
     |> Ecto.DateTime.from_date
     |> Ecto.DateTime.to_string
-  end
-
-  defp build_filter(query, _, _, matcher) do
-    Logger.warn "unknown matcher #{matcher}... skipping"
-    query
   end
 
   @doc """
