@@ -3,100 +3,107 @@ defmodule ExQueb do
   Build Ecto filter Queries.
   """
   import Ecto.Query
+  require Logger
 
   @doc """
   Create the filter
 
   Uses the :q query parameter to build the filter.
+  @options is a map with additional parameters like following:
+    scopes: list of typles {scope_name, fn/2} for custom filtering
   """
-  def filter(query, params) do
-    q = params[Application.get_env(:ex_queb, :filter_param, :q)]
-    if q do
-      filters = Map.to_list(q)
-      |> Enum.filter(&(not elem(&1,1) in ["", nil]))
-      |> Enum.map(&({Atom.to_string(elem(&1, 0)), elem(&1, 1)}))
+  def filter(query, params, options \\ %{}) do
+    params[Application.get_env(:ex_queb, :filter_param, :q)]
+    |> prepare_filters()
+    |> apply_filters(query, options)
+  end
 
-      query
-      |> uuid_filters(filters)
-      |> ExQueb.StringFilters.string_filters(filters)
-      |> integer_filters(filters)
-      |> date_filters(filters)
-    else
-      query
+  defp prepare_filters(nil), do: []
+  defp prepare_filters(filters) do
+    Map.to_list(filters)
+    |> Enum.filter(&(not elem(&1,1) in ["", nil]))
+    |> Enum.map(&({Atom.to_string(elem(&1, 0)), elem(&1, 1)}))
+  end
+
+  defp apply_filters(filters, query, options) do
+    Enum.reduce(filters, query, fn({filter, value}, query) ->
+      case Regex.run(~r/^(.+)_([\w]+)$/, filter) do
+      [_, field, "scope"] -> find_scope_in_options(options, field)
+                             |> build_scope_filter(query, value)
+      [_, field, matcher] -> build_filter(query, String.to_atom(field), value, String.to_atom(matcher))
+      _ ->
+        Logger.info "can't match filter #{filter}... skipping"
+        query
+      end
+    end)
+  end
+
+  defp find_scope_in_options(%{scopes: scopes}, field) do
+    {_, scope} = Enum.find(scopes, fn ({name, _}) -> field == "#{name}" end)
+    scope
+  end
+  defp find_scope_in_options(_, _), do: nil
+
+  defp build_scope_filter(nil, query, _), do: query
+  defp build_scope_filter(scope, query, value), do: scope.(query, value)
+
+  # UUID filter
+  defp build_filter(query, fld, value, :uuideq) do
+    case Ecto.UUID.cast(value) do
+      {:ok, uuid} -> where(query, [q], field(q, ^fld) == ^uuid)
+      _ -> query
     end
   end
 
-  defp uuid_filters(builder, filters) do
-    builder
-    |> build_uuid_filters(filters, :uuideq)
-  end
-
-  defp integer_filters(builder, filters) do
-    builder
-    |> build_integer_filters(filters, :eq)
-    |> build_integer_filters(filters, :lt)
-    |> build_integer_filters(filters, :gt)
-  end
-
-  defp date_filters(builder, filters) do
-    builder
-    |> build_date_filters(filters, :gte)
-    |> build_date_filters(filters, :lte)
-  end
-
-  defp build_uuid_filters(builder, filters, condition) do
-    Enum.filter_map(filters, &(String.match?(elem(&1,0), ~r/_#{condition}$/)), &({String.replace(elem(&1, 0), "_#{condition}", ""), elem(&1, 1)}))
-    |> Enum.reduce(builder, fn({k,v}, acc) ->
-      case Ecto.UUID.cast(v) do
-        {:ok, uuid} -> _build_uuid_filter(acc, String.to_atom(k), uuid, condition)
-        _ -> acc
-      end
-    end)
-  end
-
-  defp _build_uuid_filter(query, fld, value, :uuideq) do
+  # Numerical filters
+  defp build_filter(query, fld, value, :eq) do
     where(query, [q], field(q, ^fld) == ^value)
   end
-
-  defp build_integer_filters(builder, filters, condition) do
-    Enum.filter_map(filters, &(String.match?(elem(&1,0), ~r/_#{condition}$/)), &({String.replace(elem(&1, 0), "_#{condition}", ""), elem(&1, 1)}))
-    |> Enum.reduce(builder, fn({k,v}, acc) ->
-      v = case Integer.parse(v) do
-        {v, _} -> v
-        _ -> 0
-      end
-      _build_integer_filter(acc, String.to_atom(k), v, condition)
-    end)
-  end
-
-  defp _build_integer_filter(query, fld, value, :eq) do
-    where(query, [q], field(q, ^fld) == ^value)
-  end
-  defp _build_integer_filter(query, fld, value, :lt) do
+  defp build_filter(query, fld, value, :lt) do
     where(query, [q], field(q, ^fld) < ^value)
   end
-  defp _build_integer_filter(query, fld, value, :gte) do
-    where(query, [q], field(q, ^fld) >= ^value)
-  end
-  defp _build_integer_filter(query, fld, value, :lte) do
-    where(query, [q], field(q, ^fld) <= ^value)
-  end
-  defp _build_integer_filter(query, fld, value, :gt) do
+  #defp build_filter(query, fld, value, :gte) do
+  #  where(query, [q], field(q, ^fld) >= ^value)
+  #end
+  #defp build_filter(query, fld, value, :lte) do
+  #  where(query, [q], field(q, ^fld) <= ^value)
+  #end
+  defp build_filter(query, fld, value, :gt) do
     where(query, [q], field(q, ^fld) > ^value)
   end
 
-  defp build_date_filters(builder, filters, condition) do
-    Enum.filter_map(filters, &(String.match?(elem(&1,0), ~r/_#{condition}$/)), &({String.replace(elem(&1, 0), "_#{condition}", ""), elem(&1, 1)}))
-    |> Enum.reduce(builder, fn({k,v}, acc) ->
-      _build_date_filter(acc, String.to_atom(k), cast_date_time(v), condition)
-    end)
+  # String filters
+  defp build_filter(builder, field, value, :beginswith) do
+    match = String.downcase(value) <> "%"
+    where(builder, [q], like(fragment("LOWER(?)", field(q, ^field)), ^match))
   end
 
-  defp _build_date_filter(query, fld, value, :gte) do
-    where(query, [q], fragment("? >= ?", field(q, ^fld), type(^value, Ecto.DateTime)))
+  defp build_filter(builder, field, value, :endswith) do
+    match = "%" <> String.downcase(value)
+    where(builder, [q], like(fragment("LOWER(?)", field(q, ^field)), ^match))
   end
-  defp _build_date_filter(query, fld, value, :lte) do
-    where(query, [q], fragment("? <= ?", field(q, ^fld), type(^value, Ecto.DateTime)))
+
+  defp build_filter(builder, field, value, :contains) do
+    match = "%" <> String.downcase(value) <> "%"
+    where(builder, [q], like(fragment("LOWER(?)", field(q, ^field)), ^match))
+  end
+
+  defp build_filter(builder, field, value, :equals) do
+    where(builder, [q], fragment("LOWER(?)", field(q, ^field)) == fragment("LOWER(?)", ^value))
+  end
+
+  # Date filters
+  defp build_filter(query, fld, value, :gte) do
+    where(query, [q], fragment("? >= ?", field(q, ^fld), type(^cast_date_time(value), Ecto.DateTime)))
+  end
+  defp build_filter(query, fld, value, :lte) do
+    where(query, [q], fragment("? <= ?", field(q, ^fld), type(^cast_date_time(value), Ecto.DateTime)))
+  end
+
+  # Unknown
+  defp build_filter(query, _, _, matcher) do
+    Logger.warn "unknown matcher #{matcher}... skipping"
+    query
   end
 
   defp cast_date_time(value) do

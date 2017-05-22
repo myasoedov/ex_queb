@@ -87,12 +87,12 @@ defmodule ExQuebTest do
 
   test "string filter begins with" do
     expected = where(Test.Model, [m], like(fragment("LOWER(?)", m.name), ^"test%"))
-    assert_equal ExQueb.filter(Test.Model, %{q: %{name_begins_with: "Test"}}), expected
+    assert_equal ExQueb.filter(Test.Model, %{q: %{name_beginswith: "Test"}}), expected
   end
 
   test "string filter ends with" do
     expected = where(Test.Model, [m], like(fragment("LOWER(?)", m.name), ^"%test"))
-    assert_equal ExQueb.filter(Test.Model, %{q: %{name_ends_with: "Test"}}), expected
+    assert_equal ExQueb.filter(Test.Model, %{q: %{name_endswith: "Test"}}), expected
   end
 
   test "string filter equals" do
