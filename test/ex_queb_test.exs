@@ -40,6 +40,15 @@ defmodule ExQuebTest do
     assert_equal ExQueb.filter(Test.Model, %{}), Test.Model
   end
 
+  test "unknown filter" do
+    assert_equal ExQueb.filter(Test.Model, %{q: %{some_unknown_filter: "test"}}), Test.Model
+  end
+
+  test "scope filter" do
+    scope = fn (query, value) -> :scope_called end
+    assert_equal ExQueb.filter(Test.Model, %{q: %{test_scope: "scope"}}, %{scopes: [test: scope]}), :scope_called
+  end
+
   # %{blog_id_eq: "1", inserted_at_gte: nil, inserted_at_lte: nil, name_contains: nil, updated_at_gte: nil, updated_at_lte: nil}
   test "filters single field" do
     expected = where(Test.Model, [m], like(fragment("LOWER(?)", m.name), ^"%test%"))
